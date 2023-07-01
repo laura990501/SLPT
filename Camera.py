@@ -45,6 +45,7 @@ def parse_args():
 
 
 def draw_landmark(landmark, image):
+    #使用 cv2.circle 函数在图像上绘制关键点。对于每个关键点 (x, y)，它使用半径为 3 的圆点（颜色为绿色）在图像上绘制
 
     for (x, y) in (landmark + 0.5).astype(np.int32):
         cv2.circle(image, (x, y), 3, (0, 255, 0), -1)
@@ -130,9 +131,9 @@ def find_max_box(box_array):
     for b in dets:
         if b[14] < args.vis_thres:
             continue
-        potential_box.append(np.array([b[0], b[1], b[2], b[3], b[14]], dtype=np.int))
+        potential_box.append(np.array([b[0], b[1], b[2], b[3], b[14]]).astype('int')) #把符合条件的左上、右下和置信度组成的数组添加到potential_box
 
-    if len(potential_box) > 0:
+    if len(potential_box) > 0: #找最大人脸
         x1, y1, x2, y2 = (potential_box[0][:4]).astype(np.int32)
         Max_box = (x2 - x1) * (y2 - y1)
         Max_index = 0
@@ -148,29 +149,30 @@ def find_max_box(box_array):
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    update_config(cfg, args)
+    args = parse_args() # 解析命令行参数
+    update_config(cfg, args) # 更新配置信息
 
-    device = torch.device(args.device)
+    device = torch.device(args.device) # 设置设备
 
-    torch.set_grad_enabled(False)
+    torch.set_grad_enabled(False) # 禁用梯度计算
 
     # Cuda
-    cudnn.benchmark = True
-    torch.backends.cudnn.enabled = True
+    cudnn.benchmark = True # 用CUDA加速
+    torch.backends.cudnn.enabled = True # 启用CUDA
 
     # load face detector
-    net = Face_Detector.YuFaceDetectNet(phase='test', size=None)  # initialize detector
-    net = Face_Detector.load_model(net, args.trained_model, True)
-    net.eval()
-    net = net.to(device)
+    net = Face_Detector.YuFaceDetectNet(phase='test', size=None)  # 初始化人脸检测器
+    net = Face_Detector.load_model(net, args.trained_model, True) # 加载模型权重
+    net.eval() # 设置为评估模式
+    net = net.to(device) # 将模型移动到指定设备上
     print('Finished loading Face Detector!')
 
+    # 加载人脸关键点检测器
     model = Sparse_alignment_network(cfg.WFLW.NUM_POINT, cfg.MODEL.OUT_DIM,
                                      cfg.MODEL.TRAINABLE, cfg.MODEL.INTER_LAYER,
                                      cfg.MODEL.DILATION, cfg.TRANSFORMER.NHEAD,
                                      cfg.TRANSFORMER.FEED_DIM, cfg.WFLW.INITIAL_PATH, cfg)
-    model = torch.nn.DataParallel(model, device_ids=cfg.GPUS).cuda()
+    model = torch.nn.DataParallel(model, device_ids=cfg.GPUS).cuda() # 使用多GPU进行训练
 
     checkpoint_file = os.path.join(args.modelDir, args.checkpoint)
     checkpoint = torch.load(checkpoint_file)
@@ -187,9 +189,6 @@ if __name__ == '__main__':
     im_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     im_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Video writer
-    # out = cv2.VideoWriter('out4.mp4', cv2.VideoWriter_fourcc('M', 'P', '4', 'V'), 20, (im_width, im_height))
-
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     )
@@ -197,15 +196,18 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         normalize,
     ])
-
+    
+    frame_count = 0  # 记录帧号
     while True:
         _, frame = cap.read()
-        if frame is None: break
+        if frame is None:
+            break
 
         dets = face_detection(frame.copy(), net, 320, 240)
-        bbox = find_max_box(dets)
+        if(len(dets) == 0):
+            continue
 
-        if bbox is not None:
+        for bbox in dets:
             bbox[0] = int(bbox[0] / 320.0 * im_width + 0.5)
             bbox[2] = int(bbox[2] / 320.0 * im_width + 0.5)
             bbox[1] = int(bbox[1] / 240.0 * im_height + 0.5)
@@ -217,12 +219,22 @@ if __name__ == '__main__':
 
             landmark = utils.transform_pixel_v2(output * cfg.MODEL.IMG_SIZE, trans, inverse=True)
 
-            # cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 0, 255), 3)
+            # Find the leftmost, rightmost, topmost, and bottommost points
+            leftmost = min(landmark[:, 0])
+            rightmost = max(landmark[:, 0])
+            topmost = min(landmark[:, 1])
+            bottommost = max(landmark[:, 1])
+
+            # Draw face rectangle via landmarks
+            cv2.rectangle(frame, (int(leftmost), int(topmost)), (int(rightmost), int(bottommost)), (0, 0, 255), 2)
+            # Draw naive rectangle
+            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 225, 255), 3)
+
+
             frame = draw_landmark(landmark, frame)
-            # out.write(frame)
-            cv2.imshow('res', frame)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        result_path = os.path.join('result_36', f'result_{cap.get(cv2.CAP_PROP_POS_FRAMES)}.jpg')
+        cv2.imwrite(result_path, frame)
 
-
+        if cv2.waitKey(1) & 0xFF == ord('q') or cap.get(cv2.CAP_PROP_POS_FRAMES) == cap.get(cv2.CAP_PROP_FRAME_COUNT):
+            break
