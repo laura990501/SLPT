@@ -40,7 +40,7 @@ class WFLW_test_Dataset(Dataset):
             temp_info = temp_info.split(' ')
             for i in range(2 * self.number_landmarks):
                 temp_point.append(float(temp_info[i]))
-            point_coord = np.array(temp_point, dtype=np.float).reshape(self.number_landmarks, 2)
+            point_coord = np.array(temp_point, dtype=float).reshape(self.number_landmarks, 2)
             max_index = np.max(point_coord, axis=0)
             min_index = np.min(point_coord, axis=0)
             temp_box = np.array([min_index[0], min_index[1], max_index[0] - min_index[0],
